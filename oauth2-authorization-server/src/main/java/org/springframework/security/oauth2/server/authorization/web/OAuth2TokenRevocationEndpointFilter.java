@@ -22,6 +22,8 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -29,6 +31,7 @@ import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.server.ServletServerHttpResponse;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -37,6 +40,8 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationToken;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
+import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.util.Assert;
@@ -58,6 +63,7 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 	/**
 	 * The default endpoint {@code URI} for token revocation requests.
 	 */
+	protected final Log logger = LogFactory.getLog(this.getClass());
 	private static final String DEFAULT_TOKEN_REVOCATION_ENDPOINT_URI = "/oauth2/revoke";
 
 	private final AuthenticationManager authenticationManager;
@@ -66,6 +72,10 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 			new DefaultTokenRevocationAuthenticationConverter();
 	private final HttpMessageConverter<OAuth2Error> errorHttpResponseConverter =
 			new OAuth2ErrorHttpMessageConverter();
+
+	private AuthenticationSuccessHandler authenticationSuccessHandler = this::onTokenRevocationSuccess;
+	private AuthenticationFailureHandler authenticationFailureHandler = this::onTokenRevocationFail;
+
 
 	/**
 	 * Constructs an {@code OAuth2TokenRevocationEndpointFilter} using the provided parameters.
@@ -101,11 +111,13 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 		}
 
 		try {
-			this.authenticationManager.authenticate(
+			OAuth2TokenRevocationAuthenticationToken auth2TokenRevocationAuthenticationToken = (OAuth2TokenRevocationAuthenticationToken) this.authenticationManager.authenticate(
 					this.tokenRevocationAuthenticationConverter.convert(request));
+			this.authenticationSuccessHandler.onAuthenticationSuccess(request,response,auth2TokenRevocationAuthenticationToken);
 			response.setStatus(HttpStatus.OK.value());
 		} catch (OAuth2AuthenticationException ex) {
 			SecurityContextHolder.clearContext();
+			this.authenticationFailureHandler.onAuthenticationFailure(request,response,ex);
 			sendErrorResponse(response, ex.getError());
 		}
 	}
@@ -122,6 +134,21 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 		throw new OAuth2AuthenticationException(error);
 	}
 
+	public void setAuthenticationSuccessHandler(AuthenticationSuccessHandler authenticationSuccessHandler) {
+		Assert.notNull(authenticationSuccessHandler, "authenticationSuccessHandler cannot be null");
+		this.authenticationSuccessHandler = authenticationSuccessHandler;
+	}
+	public void setAuthenticationFailureHandler(AuthenticationFailureHandler authenticationFailureHandler){
+		Assert.notNull(authenticationFailureHandler, "authenticationFailureHandler cannot be null");
+		this.authenticationFailureHandler = authenticationFailureHandler;
+	}
+
+	void onTokenRevocationSuccess(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse, Authentication authentication) {
+		this.logger.info("Token revoked");
+	}
+	void onTokenRevocationFail(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse, AuthenticationException exception) {
+		this.logger.info("Token revocation error");
+	}
 	private static class DefaultTokenRevocationAuthenticationConverter
 			implements Converter<HttpServletRequest, Authentication> {
 

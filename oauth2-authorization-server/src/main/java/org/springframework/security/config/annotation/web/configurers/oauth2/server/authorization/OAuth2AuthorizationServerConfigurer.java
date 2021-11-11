@@ -152,6 +152,11 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 		return this;
 	}
 
+	public OAuth2AuthorizationServerConfigurer<B> tokenRevocationEndpoint(Customizer<OAuth2TokenRevocationEndpointConfigurer> tokenRevocationEndpointCustomizer){
+		tokenRevocationEndpointCustomizer.customize(getConfigurer(OAuth2TokenRevocationEndpointConfigurer.class));
+		return this;
+	}
+
 	/**
 	 * Configures the OAuth 2.0 Token Endpoint.
 	 *
@@ -251,6 +256,7 @@ public final class OAuth2AuthorizationServerConfigurer<B extends HttpSecurityBui
 		configurers.put(OAuth2ClientAuthenticationConfigurer.class, new OAuth2ClientAuthenticationConfigurer(this::postProcess));
 		configurers.put(OAuth2AuthorizationEndpointConfigurer.class, new OAuth2AuthorizationEndpointConfigurer(this::postProcess));
 		configurers.put(OAuth2TokenEndpointConfigurer.class, new OAuth2TokenEndpointConfigurer(this::postProcess));
+		configurers.put(OAuth2TokenRevocationEndpointConfigurer.class, new OAuth2TokenRevocationEndpointConfigurer(this::postProcess));
 		configurers.put(OidcConfigurer.class, new OidcConfigurer(this::postProcess));
 		return configurers;
 	}
