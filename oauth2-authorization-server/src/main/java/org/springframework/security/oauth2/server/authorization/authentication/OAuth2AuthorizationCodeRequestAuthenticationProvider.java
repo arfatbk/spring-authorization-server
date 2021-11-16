@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -60,6 +61,7 @@ import org.springframework.web.util.UriComponentsBuilder;
  * used in the Authorization Code Grant.
  *
  * @author Joe Grandja
+ * @author Steve Riesenberg
  * @since 0.1.2
  * @see OAuth2AuthorizationCodeRequestAuthenticationToken
  * @see OAuth2AuthorizationCodeAuthenticationProvider
@@ -82,6 +84,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 	private final OAuth2AuthorizationConsentService authorizationConsentService;
 	private Supplier<String> authorizationCodeGenerator = DEFAULT_AUTHORIZATION_CODE_GENERATOR::generateKey;
 	private Function<String, OAuth2AuthenticationValidator> authenticationValidatorResolver = DEFAULT_AUTHENTICATION_VALIDATOR_RESOLVER;
+	private Consumer<OAuth2AuthorizationConsentAuthenticationContext> authorizationConsentCustomizer;
 
 	/**
 	 * Constructs an {@code OAuth2AuthorizationCodeRequestAuthenticationProvider} using the provided parameters.
@@ -145,6 +148,31 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		this.authenticationValidatorResolver = authenticationValidatorResolver;
 	}
 
+	/**
+	 * Sets the {@code Consumer} providing access to the {@link OAuth2AuthorizationConsentAuthenticationContext}
+	 * containing an {@link OAuth2AuthorizationConsent.Builder} and additional context information.
+	 *
+	 * <p>
+	 * The following context attributes are available:
+	 * <ul>
+	 * <li>The {@link OAuth2AuthorizationConsent.Builder} used to build the authorization consent
+	 * prior to {@link OAuth2AuthorizationConsentService#save(OAuth2AuthorizationConsent)}.</li>
+	 * <li>The {@link Authentication} of type
+	 * {@link OAuth2AuthorizationCodeRequestAuthenticationToken}.</li>
+	 * <li>The {@link RegisteredClient} associated with the authorization request.</li>
+	 * <li>The {@link OAuth2Authorization} associated with the state token presented in the
+	 * authorization consent request.</li>
+	 * <li>The {@link OAuth2AuthorizationRequest} associated with the authorization consent request.</li>
+	 * </ul>
+	 *
+	 * @param authorizationConsentCustomizer the {@code Consumer} providing access to the
+	 * {@link OAuth2AuthorizationConsentAuthenticationContext} containing an {@link OAuth2AuthorizationConsent.Builder}
+	 */
+	public void setAuthorizationConsentCustomizer(Consumer<OAuth2AuthorizationConsentAuthenticationContext> authorizationConsentCustomizer) {
+		Assert.notNull(authorizationConsentCustomizer, "authorizationConsentCustomizer cannot be null");
+		this.authorizationConsentCustomizer = authorizationConsentCustomizer;
+	}
+
 	private Authentication authenticateAuthorizationRequest(Authentication authentication) throws AuthenticationException {
 		OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthentication =
 				(OAuth2AuthorizationCodeRequestAuthenticationToken) authentication;
@@ -156,10 +184,10 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 					authorizationCodeRequestAuthentication, null);
 		}
 
-		Map<Object, Object> context = new HashMap<>();
-		context.put(RegisteredClient.class, registeredClient);
-		OAuth2AuthenticationContext authenticationContext = new OAuth2AuthenticationContext(
-				authorizationCodeRequestAuthentication, context);
+		OAuth2AuthenticationContext authenticationContext =
+				OAuth2AuthenticationContext.with(authorizationCodeRequestAuthentication)
+						.put(RegisteredClient.class, registeredClient)
+						.build();
 
 		OAuth2AuthenticationValidator redirectUriValidator = resolveAuthenticationValidator(OAuth2ParameterNames.REDIRECT_URI);
 		redirectUriValidator.validate(authenticationContext);
@@ -301,7 +329,8 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		Set<String> currentAuthorizedScopes = currentAuthorizationConsent != null ?
 				currentAuthorizationConsent.getScopes() : Collections.emptySet();
 
-		if (authorizedScopes.isEmpty() && currentAuthorizedScopes.isEmpty()) {
+		if (authorizedScopes.isEmpty() && currentAuthorizedScopes.isEmpty() &&
+				authorizationCodeRequestAuthentication.getAdditionalParameters().isEmpty()) {
 			// Authorization consent denied
 			this.authorizationService.remove(authorization);
 			throwError(OAuth2ErrorCodes.ACCESS_DENIED, OAuth2ParameterNames.CLIENT_ID,
@@ -321,16 +350,29 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 			}
 		}
 
-		if (!authorizedScopes.isEmpty() && !authorizedScopes.equals(currentAuthorizedScopes)) {
-			OAuth2AuthorizationConsent.Builder authorizationConsentBuilder;
-			if (currentAuthorizationConsent != null) {
-				authorizationConsentBuilder = OAuth2AuthorizationConsent.from(currentAuthorizationConsent);
-			} else {
-				authorizationConsentBuilder = OAuth2AuthorizationConsent.withId(
-						authorization.getRegisteredClientId(), authorization.getPrincipalName());
-			}
-			authorizedScopes.forEach(authorizationConsentBuilder::scope);
-			OAuth2AuthorizationConsent authorizationConsent = authorizationConsentBuilder.build();
+		OAuth2AuthorizationConsent.Builder authorizationConsentBuilder;
+		if (currentAuthorizationConsent != null) {
+			authorizationConsentBuilder = OAuth2AuthorizationConsent.from(currentAuthorizationConsent);
+		} else {
+			authorizationConsentBuilder = OAuth2AuthorizationConsent.withId(
+					authorization.getRegisteredClientId(), authorization.getPrincipalName());
+		}
+		authorizedScopes.forEach(authorizationConsentBuilder::scope);
+
+		if (this.authorizationConsentCustomizer != null) {
+			// @formatter:off
+			OAuth2AuthorizationConsentAuthenticationContext authorizationConsentAuthenticationContext =
+					OAuth2AuthorizationConsentAuthenticationContext.with(authorizationCodeRequestAuthentication, authorizationConsentBuilder)
+							.registeredClient(registeredClient)
+							.authorization(authorization)
+							.authorizationRequest(authorizationRequest)
+							.build();
+			// @formatter:on
+			this.authorizationConsentCustomizer.accept(authorizationConsentAuthenticationContext);
+		}
+
+		OAuth2AuthorizationConsent authorizationConsent = authorizationConsentBuilder.build();
+		if (!authorizationConsent.equals(currentAuthorizationConsent)) {
 			this.authorizationConsentService.save(authorizationConsent);
 		}
 

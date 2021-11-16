@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -31,6 +32,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2TokenType;
@@ -41,7 +43,6 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.endpoint.PkceParameterNames;
 import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
-import org.springframework.security.oauth2.core.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
@@ -66,6 +67,7 @@ import static org.mockito.Mockito.when;
  * Tests for {@link OAuth2AuthorizationCodeRequestAuthenticationProvider}.
  *
  * @author Joe Grandja
+ * @author Steve Riesenberg
  */
 public class OAuth2AuthorizationCodeRequestAuthenticationProviderTests {
 	private static final OAuth2TokenType STATE_TOKEN_TYPE = new OAuth2TokenType(OAuth2ParameterNames.STATE);
@@ -127,6 +129,13 @@ public class OAuth2AuthorizationCodeRequestAuthenticationProviderTests {
 		assertThatThrownBy(() -> this.authenticationProvider.setAuthenticationValidatorResolver(null))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("authenticationValidatorResolver cannot be null");
+	}
+
+	@Test
+	public void setAuthorizationConsentCustomizerWhenNullThenThrowIllegalArgumentException() {
+		assertThatThrownBy(() -> this.authenticationProvider.setAuthorizationConsentCustomizer(null))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("authorizationConsentCustomizer cannot be null");
 	}
 
 	@Test
@@ -772,6 +781,55 @@ public class OAuth2AuthorizationCodeRequestAuthenticationProviderTests {
 
 		OAuth2AuthorizationCodeRequestAuthenticationToken authenticationResult =
 				(OAuth2AuthorizationCodeRequestAuthenticationToken) this.authenticationProvider.authenticate(authentication);
+
+		assertAuthorizationConsentRequestWithAuthorizationCodeResult(registeredClient, authorization, authenticationResult);
+	}
+
+	@Test
+	public void authenticateWhenCustomAuthorizationConsentCustomizerThenUsed() {
+		RegisteredClient registeredClient = TestRegisteredClients.registeredClient()
+				.build();
+		when(this.registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
+				.thenReturn(registeredClient);
+		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient)
+				.principalName(this.principal.getName())
+				.build();
+		OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(OAuth2AuthorizationRequest.class.getName());
+		Set<String> authorizedScopes = authorizationRequest.getScopes();
+		OAuth2AuthorizationCodeRequestAuthenticationToken authentication =
+				authorizationConsentRequestAuthentication(registeredClient, this.principal)
+						.scopes(authorizedScopes)		// Approve all scopes
+						.build();
+		when(this.authorizationService.findByToken(eq(authentication.getState()), eq(STATE_TOKEN_TYPE)))
+				.thenReturn(authorization);
+
+		@SuppressWarnings("unchecked")
+		Consumer<OAuth2AuthorizationConsentAuthenticationContext> authorizationConsentCustomizer = mock(Consumer.class);
+		this.authenticationProvider.setAuthorizationConsentCustomizer(authorizationConsentCustomizer);
+
+		OAuth2AuthorizationCodeRequestAuthenticationToken authenticationResult =
+				(OAuth2AuthorizationCodeRequestAuthenticationToken) this.authenticationProvider.authenticate(authentication);
+
+		assertAuthorizationConsentRequestWithAuthorizationCodeResult(registeredClient, authorization, authenticationResult);
+
+		ArgumentCaptor<OAuth2AuthorizationConsentAuthenticationContext> authenticationContextCaptor =
+				ArgumentCaptor.forClass(OAuth2AuthorizationConsentAuthenticationContext.class);
+		verify(authorizationConsentCustomizer).accept(authenticationContextCaptor.capture());
+
+		OAuth2AuthorizationConsentAuthenticationContext authenticationContext = authenticationContextCaptor.getValue();
+		assertThat(authenticationContext.<Authentication>getAuthentication()).isEqualTo(authentication);
+		assertThat(authenticationContext.getAuthorizationConsent()).isNotNull();
+		assertThat(authenticationContext.getRegisteredClient()).isEqualTo(registeredClient);
+		assertThat(authenticationContext.getAuthorization()).isEqualTo(authorization);
+		assertThat(authenticationContext.getAuthorizationRequest()).isEqualTo(authorizationRequest);
+	}
+
+	private void assertAuthorizationConsentRequestWithAuthorizationCodeResult(
+			RegisteredClient registeredClient,
+			OAuth2Authorization authorization,
+			OAuth2AuthorizationCodeRequestAuthenticationToken authenticationResult) {
+		OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(OAuth2AuthorizationRequest.class.getName());
+		Set<String> authorizedScopes = authorizationRequest.getScopes();
 
 		ArgumentCaptor<OAuth2AuthorizationConsent> authorizationConsentCaptor = ArgumentCaptor.forClass(OAuth2AuthorizationConsent.class);
 		verify(this.authorizationConsentService).save(authorizationConsentCaptor.capture());
