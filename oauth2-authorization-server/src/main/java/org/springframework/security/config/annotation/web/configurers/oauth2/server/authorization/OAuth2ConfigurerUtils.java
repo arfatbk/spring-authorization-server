@@ -15,6 +15,8 @@
  */
 package org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import com.nimbusds.jose.jwk.source.JWKSource;
@@ -25,6 +27,7 @@ import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.ResolvableType;
+import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.annotation.web.HttpSecurityBuilder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwsEncoder;
@@ -34,6 +37,9 @@ import org.springframework.security.oauth2.server.authorization.JwtEncodingConte
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenCustomizer;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientCredentialsAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2RefreshTokenAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.ProviderSettings;
 import org.springframework.util.StringUtils;
@@ -169,4 +175,39 @@ final class OAuth2ConfigurerUtils {
 		return names.length == 1 ? (T) context.getBean(names[0]) : null;
 	}
 
+	static <B extends HttpSecurityBuilder<B>> List<AuthenticationProvider> createDefaultAuthenticationProviders(B builder) {
+		List<AuthenticationProvider> authenticationProviders = new ArrayList<>();
+
+		JwtEncoder jwtEncoder = OAuth2ConfigurerUtils.getJwtEncoder(builder);
+		OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer = OAuth2ConfigurerUtils.getJwtCustomizer(builder);
+
+		OAuth2AuthorizationCodeAuthenticationProvider authorizationCodeAuthenticationProvider =
+				new OAuth2AuthorizationCodeAuthenticationProvider(
+						OAuth2ConfigurerUtils.getAuthorizationService(builder),
+						jwtEncoder);
+		if (jwtCustomizer != null) {
+			authorizationCodeAuthenticationProvider.setJwtCustomizer(jwtCustomizer);
+		}
+		authenticationProviders.add(authorizationCodeAuthenticationProvider);
+
+		OAuth2RefreshTokenAuthenticationProvider refreshTokenAuthenticationProvider =
+				new OAuth2RefreshTokenAuthenticationProvider(
+						OAuth2ConfigurerUtils.getAuthorizationService(builder),
+						jwtEncoder);
+		if (jwtCustomizer != null) {
+			refreshTokenAuthenticationProvider.setJwtCustomizer(jwtCustomizer);
+		}
+		authenticationProviders.add(refreshTokenAuthenticationProvider);
+
+		OAuth2ClientCredentialsAuthenticationProvider clientCredentialsAuthenticationProvider =
+				new OAuth2ClientCredentialsAuthenticationProvider(
+						OAuth2ConfigurerUtils.getAuthorizationService(builder),
+						jwtEncoder);
+		if (jwtCustomizer != null) {
+			clientCredentialsAuthenticationProvider.setJwtCustomizer(jwtCustomizer);
+		}
+		authenticationProviders.add(clientCredentialsAuthenticationProvider);
+
+		return authenticationProviders;
+	}
 }

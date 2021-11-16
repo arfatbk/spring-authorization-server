@@ -22,31 +22,24 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.server.ServletServerHttpResponse;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
-import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
-import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationProvider;
-import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenRevocationAuthenticationToken;
+import org.springframework.security.oauth2.server.authorization.web.authentication.DefaultTokenRevocationAuthenticationConverter;
+import org.springframework.security.web.authentication.AuthenticationConverter;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.util.Assert;
-import org.springframework.util.MultiValueMap;
-import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -63,18 +56,16 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 	/**
 	 * The default endpoint {@code URI} for token revocation requests.
 	 */
-	protected final Log logger = LogFactory.getLog(this.getClass());
 	private static final String DEFAULT_TOKEN_REVOCATION_ENDPOINT_URI = "/oauth2/revoke";
 
 	private final AuthenticationManager authenticationManager;
+	private AuthenticationConverter tokenRevocationAuthenticationConverter;
 	private final RequestMatcher tokenRevocationEndpointMatcher;
-	private final Converter<HttpServletRequest, Authentication> tokenRevocationAuthenticationConverter =
-			new DefaultTokenRevocationAuthenticationConverter();
 	private final HttpMessageConverter<OAuth2Error> errorHttpResponseConverter =
 			new OAuth2ErrorHttpMessageConverter();
 
-	private AuthenticationSuccessHandler authenticationSuccessHandler = this::onTokenRevocationSuccess;
-	private AuthenticationFailureHandler authenticationFailureHandler = this::onTokenRevocationFail;
+	private AuthenticationSuccessHandler authenticationSuccessHandler = (request, response, authentication) -> {};
+	private AuthenticationFailureHandler authenticationFailureHandler = (request, response, exception) -> {};
 
 
 	/**
@@ -99,6 +90,7 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 		this.authenticationManager = authenticationManager;
 		this.tokenRevocationEndpointMatcher = new AntPathRequestMatcher(
 				tokenRevocationEndpointUri, HttpMethod.POST.name());
+		this.tokenRevocationAuthenticationConverter = new DefaultTokenRevocationAuthenticationConverter();
 	}
 
 	@Override
@@ -111,9 +103,9 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 		}
 
 		try {
-			OAuth2TokenRevocationAuthenticationToken auth2TokenRevocationAuthenticationToken = (OAuth2TokenRevocationAuthenticationToken) this.authenticationManager.authenticate(
+			Authentication authentication = this.authenticationManager.authenticate(
 					this.tokenRevocationAuthenticationConverter.convert(request));
-			this.authenticationSuccessHandler.onAuthenticationSuccess(request,response,auth2TokenRevocationAuthenticationToken);
+			this.authenticationSuccessHandler.onAuthenticationSuccess(request,response,authentication);
 			response.setStatus(HttpStatus.OK.value());
 		} catch (OAuth2AuthenticationException ex) {
 			SecurityContextHolder.clearContext();
@@ -128,10 +120,9 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 		this.errorHttpResponseConverter.write(error, null, httpResponse);
 	}
 
-	private static void throwError(String errorCode, String parameterName) {
-		OAuth2Error error = new OAuth2Error(errorCode, "OAuth 2.0 Token Revocation Parameter: " + parameterName,
-				"https://tools.ietf.org/html/rfc7009#section-2.1");
-		throw new OAuth2AuthenticationException(error);
+	public void setAuthenticationConverter(AuthenticationConverter tokenRevocationAuthenticationConverter) {
+		Assert.notNull(tokenRevocationAuthenticationConverter, "authenticationConverter cannot be null");
+		this.tokenRevocationAuthenticationConverter = tokenRevocationAuthenticationConverter;
 	}
 
 	public void setAuthenticationSuccessHandler(AuthenticationSuccessHandler authenticationSuccessHandler) {
@@ -143,36 +134,4 @@ public final class OAuth2TokenRevocationEndpointFilter extends OncePerRequestFil
 		this.authenticationFailureHandler = authenticationFailureHandler;
 	}
 
-	void onTokenRevocationSuccess(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse, Authentication authentication) {
-		this.logger.info("Token revoked");
-	}
-	void onTokenRevocationFail(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse, AuthenticationException exception) {
-		this.logger.info("Token revocation error");
-	}
-	private static class DefaultTokenRevocationAuthenticationConverter
-			implements Converter<HttpServletRequest, Authentication> {
-
-		@Override
-		public Authentication convert(HttpServletRequest request) {
-			Authentication clientPrincipal = SecurityContextHolder.getContext().getAuthentication();
-
-			MultiValueMap<String, String> parameters = OAuth2EndpointUtils.getParameters(request);
-
-			// token (REQUIRED)
-			String token = parameters.getFirst(OAuth2ParameterNames.TOKEN);
-			if (!StringUtils.hasText(token) ||
-					parameters.get(OAuth2ParameterNames.TOKEN).size() != 1) {
-				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.TOKEN);
-			}
-
-			// token_type_hint (OPTIONAL)
-			String tokenTypeHint = parameters.getFirst(OAuth2ParameterNames.TOKEN_TYPE_HINT);
-			if (StringUtils.hasText(tokenTypeHint) &&
-					parameters.get(OAuth2ParameterNames.TOKEN_TYPE_HINT).size() != 1) {
-				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.TOKEN_TYPE_HINT);
-			}
-
-			return new OAuth2TokenRevocationAuthenticationToken(token, clientPrincipal, tokenTypeHint);
-		}
-	}
 }

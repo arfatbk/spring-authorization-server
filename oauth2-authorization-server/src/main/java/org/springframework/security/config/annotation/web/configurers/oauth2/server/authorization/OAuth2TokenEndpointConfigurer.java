@@ -124,7 +124,7 @@ public final class OAuth2TokenEndpointConfigurer extends AbstractOAuth2Configure
 		List<AuthenticationProvider> authenticationProviders =
 				!this.authenticationProviders.isEmpty() ?
 						this.authenticationProviders :
-						createDefaultAuthenticationProviders(builder);
+						OAuth2ConfigurerUtils.createDefaultAuthenticationProviders(builder);
 		authenticationProviders.forEach(authenticationProvider ->
 				builder.authenticationProvider(postProcess(authenticationProvider)));
 	}
@@ -153,42 +153,6 @@ public final class OAuth2TokenEndpointConfigurer extends AbstractOAuth2Configure
 	@Override
 	RequestMatcher getRequestMatcher() {
 		return this.requestMatcher;
-	}
-
-	private <B extends HttpSecurityBuilder<B>> List<AuthenticationProvider> createDefaultAuthenticationProviders(B builder) {
-		List<AuthenticationProvider> authenticationProviders = new ArrayList<>();
-
-		JwtEncoder jwtEncoder = OAuth2ConfigurerUtils.getJwtEncoder(builder);
-		OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer = OAuth2ConfigurerUtils.getJwtCustomizer(builder);
-
-		OAuth2AuthorizationCodeAuthenticationProvider authorizationCodeAuthenticationProvider =
-				new OAuth2AuthorizationCodeAuthenticationProvider(
-						OAuth2ConfigurerUtils.getAuthorizationService(builder),
-						jwtEncoder);
-		if (jwtCustomizer != null) {
-			authorizationCodeAuthenticationProvider.setJwtCustomizer(jwtCustomizer);
-		}
-		authenticationProviders.add(authorizationCodeAuthenticationProvider);
-
-		OAuth2RefreshTokenAuthenticationProvider refreshTokenAuthenticationProvider =
-				new OAuth2RefreshTokenAuthenticationProvider(
-						OAuth2ConfigurerUtils.getAuthorizationService(builder),
-						jwtEncoder);
-		if (jwtCustomizer != null) {
-			refreshTokenAuthenticationProvider.setJwtCustomizer(jwtCustomizer);
-		}
-		authenticationProviders.add(refreshTokenAuthenticationProvider);
-
-		OAuth2ClientCredentialsAuthenticationProvider clientCredentialsAuthenticationProvider =
-				new OAuth2ClientCredentialsAuthenticationProvider(
-						OAuth2ConfigurerUtils.getAuthorizationService(builder),
-						jwtEncoder);
-		if (jwtCustomizer != null) {
-			clientCredentialsAuthenticationProvider.setJwtCustomizer(jwtCustomizer);
-		}
-		authenticationProviders.add(clientCredentialsAuthenticationProvider);
-
-		return authenticationProviders;
 	}
 
 }
